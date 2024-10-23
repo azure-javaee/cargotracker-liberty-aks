@@ -3,10 +3,10 @@ entries:
   cargotracker-liberty-aks-chart:
   - apiVersion: v2
     appVersion: 1.16.0
-    created: "2024-09-20T07:33:43.252945458Z"
+    created: "2024-10-23T16:27:16.531492459Z"
     description: A Helm chart for deploying the cargotracker application on aks using
       Liberty.
-    digest: b92c735b0a1d48e5313d44c1dbaa420a079390da3c2b3f46bfcde1ffffe45877
+    digest: ced6ecf45e28c1eff33478697add7f8d78ba6477473db576d0bd7e485df25402
     name: cargotracker-liberty-aks-chart
     type: application
     urls:
@@ -56,4 +56,4 @@ entries:
     urls:
     - https://azure-javaee.github.io/cargotracker-liberty-aks/cargotracker-liberty-aks-chart-1.0.4.tgz
     version: 1.0.4
-generated: "2024-09-26T20:29:56.928417002Z"
+generated: "2024-10-23T16:27:16.531122595Z"
