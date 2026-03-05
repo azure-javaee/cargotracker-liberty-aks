@@ -27,3 +27,5 @@ target/*
 /.idea/
 /tmp-build/
 /infra/azure.liberty.aks/
+.env.edburns
+cargo-tracker-data/
