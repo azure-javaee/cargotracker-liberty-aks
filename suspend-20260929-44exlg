@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly SUBSCRIPTION_ID="05887623-95c5-4e50-a71c-6e1c738794e2"
+readonly RESOURCE_GROUP="rg-eb-ct-olaks-w2-20260929-44exlg"
+readonly AKS_CLUSTER="cluster2396a7"
+readonly POSTGRES_SERVER="liberty-server-44exlg"
+readonly APPLICATION_GATEWAY="appgw2396a7"
+readonly WAIT_TIMEOUT_SECONDS="${WAIT_TIMEOUT_SECONDS:-1800}"
+readonly POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-15}"
+
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Required command not found: $1" >&2
+    exit 1
+  fi
+}
+
+get_aks_state() {
+  local values
+  local power_state
+  local provisioning_state
+
+  values=$(az aks show \
+    --subscription "${SUBSCRIPTION_ID}" \
+    --resource-group "${RESOURCE_GROUP}" \
+    --name "${AKS_CLUSTER}" \
+    --query "join(':', [powerState.code, provisioningState])" \
+    --output tsv \
+    --only-show-errors | tr -d '\r')
+  power_state=${values%%:*}
+  provisioning_state=${values#*:}
+  if [[ "${provisioning_state}" == "Succeeded" ]]; then
+    printf '%s\n' "${power_state}"
+  else
+    printf '%s\n' "${provisioning_state}"
+  fi
+}
+
+get_postgres_state() {
+  az postgres flexible-server show \
+    --subscription "${SUBSCRIPTION_ID}" \
+    --resource-group "${RESOURCE_GROUP}" \
+    --name "${POSTGRES_SERVER}" \
+    --query state \
+    --output tsv \
+    --only-show-errors | tr -d '\r'
+}
+
+get_gateway_state() {
+  az network application-gateway show \
+    --subscription "${SUBSCRIPTION_ID}" \
+    --resource-group "${RESOURCE_GROUP}" \
+    --name "${APPLICATION_GATEWAY}" \
+    --query operationalState \
+    --output tsv \
+    --only-show-errors | tr -d '\r'
+}
+
+wait_for_state() {
+  local label=$1
+  local expected=$2
+  local state_command=$3
+  local deadline=$((SECONDS + WAIT_TIMEOUT_SECONDS))
+  local state
+  local previous_state=""
+
+  while (( SECONDS < deadline )); do
+    state=$("${state_command}")
+    if [[ "${state}" == "${expected}" ]]; then
+      echo "${label}: ${state}"
+      return 0
+    fi
+    if [[ "${state}" != "${previous_state}" ]]; then
+      echo "${label}: waiting for ${expected}; current state is ${state:-unknown}"
+      previous_state=${state}
+    fi
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+
+  echo "Timed out after ${WAIT_TIMEOUT_SECONDS}s waiting for ${label} to reach ${expected}." >&2
+  return 1
+}
+
+stop_gateway() {
+  local state
+  state=$(get_gateway_state)
+  case "${state}" in
+    Stopped)
+      echo "Application Gateway is already stopped."
+      ;;
+    Running)
+      echo "Stopping Application Gateway ${APPLICATION_GATEWAY}..."
+      az network application-gateway stop \
+        --subscription "${SUBSCRIPTION_ID}" \
+        --resource-group "${RESOURCE_GROUP}" \
+        --name "${APPLICATION_GATEWAY}" \
+        --no-wait \
+        --output none \
+        --only-show-errors
+      ;;
+    Stopping)
+      echo "Application Gateway is already stopping."
+      ;;
+    *)
+      echo "Cannot stop Application Gateway from state: ${state:-unknown}" >&2
+      return 1
+      ;;
+  esac
+  wait_for_state "Application Gateway" "Stopped" get_gateway_state
+}
+
+stop_aks() {
+  local state
+  state=$(get_aks_state)
+  case "${state}" in
+    Stopped)
+      echo "AKS cluster is already stopped."
+      ;;
+    Running)
+      echo "Stopping AKS cluster ${AKS_CLUSTER}..."
+      az aks stop \
+        --subscription "${SUBSCRIPTION_ID}" \
+        --resource-group "${RESOURCE_GROUP}" \
+        --name "${AKS_CLUSTER}" \
+        --no-wait \
+        --output none \
+        --only-show-errors
+      ;;
+    Stopping)
+      echo "AKS cluster is already stopping."
+      ;;
+    *)
+      echo "Cannot stop AKS cluster from state: ${state:-unknown}" >&2
+      return 1
+      ;;
+  esac
+  wait_for_state "AKS cluster" "Stopped" get_aks_state
+}
+
+stop_postgres() {
+  local state
+  state=$(get_postgres_state)
+  case "${state}" in
+    Stopped)
+      echo "PostgreSQL server is already stopped."
+      ;;
+    Ready)
+      echo "Stopping PostgreSQL server ${POSTGRES_SERVER}..."
+      az postgres flexible-server stop \
+        --subscription "${SUBSCRIPTION_ID}" \
+        --resource-group "${RESOURCE_GROUP}" \
+        --name "${POSTGRES_SERVER}" \
+        --no-wait \
+        --output none \
+        --only-show-errors
+      ;;
+    Stopping)
+      echo "PostgreSQL server is already stopping."
+      ;;
+    *)
+      echo "Cannot stop PostgreSQL server from state: ${state:-unknown}" >&2
+      return 1
+      ;;
+  esac
+  wait_for_state "PostgreSQL server" "Stopped" get_postgres_state
+}
+
+require_command az
+az account show \
+  --subscription "${SUBSCRIPTION_ID}" \
+  --output none \
+  --only-show-errors
+
+echo "Suspending Cargo Tracker deployment in ${RESOURCE_GROUP}..."
+stop_gateway
+stop_aks
+stop_postgres
+
+# AGIC can restart a stopped gateway by updating it before AKS fully stops.
+stop_gateway
+
+echo "Cargo Tracker is suspended."
+echo "PostgreSQL automatically starts after seven days if it is not resumed sooner."

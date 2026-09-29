@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly SUBSCRIPTION_ID="05887623-95c5-4e50-a71c-6e1c738794e2"
+readonly RESOURCE_GROUP="rg-eb-ct-olaks-w2-20260929-44exlg"
+readonly AKS_CLUSTER="cluster2396a7"
+readonly POSTGRES_SERVER="liberty-server-44exlg"
+readonly APPLICATION_GATEWAY="appgw2396a7"
+readonly KUBERNETES_NAMESPACE="default"
+readonly APPLICATION_NAME="cargo-tracker-cluster"
+readonly CARGO_TRACKER_URL="http://olgw2396a7.westus2.cloudapp.azure.com/cargo-tracker/"
+readonly WAIT_TIMEOUT_SECONDS="${WAIT_TIMEOUT_SECONDS:-1800}"
+readonly POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-15}"
+readonly SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Required command not found: $1" >&2
+    exit 1
+  fi
+}
+
+find_kubectl() {
+  if [[ -n "${KUBECTL:-}" ]]; then
+    if [[ ! -x "${KUBECTL}" ]]; then
+      echo "KUBECTL is not executable: ${KUBECTL}" >&2
+      return 1
+    fi
+    printf '%s\n' "${KUBECTL}"
+  elif command -v kubectl >/dev/null 2>&1; then
+    command -v kubectl
+  elif [[ -x "${SCRIPT_DIRECTORY}/.tools/bin/kubectl" ]]; then
+    printf '%s\n' "${SCRIPT_DIRECTORY}/.tools/bin/kubectl"
+  else
+    echo "kubectl was not found on PATH or at .tools/bin/kubectl." >&2
+    return 1
+  fi
+}
+
+get_aks_state() {
+  local values
+  local power_state
+  local provisioning_state
+
+  values=$(az aks show \
+    --subscription "${SUBSCRIPTION_ID}" \
+    --resource-group "${RESOURCE_GROUP}" \
+    --name "${AKS_CLUSTER}" \
+    --query "join(':', [powerState.code, provisioningState])" \
+    --output tsv \
+    --only-show-errors | tr -d '\r')
+  power_state=${values%%:*}
+  provisioning_state=${values#*:}
+  if [[ "${provisioning_state}" == "Succeeded" ]]; then
+    printf '%s\n' "${power_state}"
+  else
+    printf '%s\n' "${provisioning_state}"
+  fi
+}
+
+get_postgres_state() {
+  az postgres flexible-server show \
+    --subscription "${SUBSCRIPTION_ID}" \
+    --resource-group "${RESOURCE_GROUP}" \
+    --name "${POSTGRES_SERVER}" \
+    --query state \
+    --output tsv \
+    --only-show-errors | tr -d '\r'
+}
+
+get_gateway_state() {
+  az network application-gateway show \
+    --subscription "${SUBSCRIPTION_ID}" \
+    --resource-group "${RESOURCE_GROUP}" \
+    --name "${APPLICATION_GATEWAY}" \
+    --query operationalState \
+    --output tsv \
+    --only-show-errors | tr -d '\r'
+}
+
+wait_for_state() {
+  local label=$1
+  local expected=$2
+  local state_command=$3
+  local deadline=$((SECONDS + WAIT_TIMEOUT_SECONDS))
+  local state
+  local previous_state=""
+
+  while (( SECONDS < deadline )); do
+    state=$("${state_command}")
+    if [[ "${state}" == "${expected}" ]]; then
+      echo "${label}: ${state}"
+      return 0
+    fi
+    if [[ "${state}" != "${previous_state}" ]]; then
+      echo "${label}: waiting for ${expected}; current state is ${state:-unknown}"
+      previous_state=${state}
+    fi
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+
+  echo "Timed out after ${WAIT_TIMEOUT_SECONDS}s waiting for ${label} to reach ${expected}." >&2
+  return 1
+}
+
+start_postgres() {
+  local state
+  state=$(get_postgres_state)
+  case "${state}" in
+    Ready)
+      echo "PostgreSQL server is already ready."
+      ;;
+    Stopped)
+      echo "Starting PostgreSQL server ${POSTGRES_SERVER}..."
+      az postgres flexible-server start \
+        --subscription "${SUBSCRIPTION_ID}" \
+        --resource-group "${RESOURCE_GROUP}" \
+        --name "${POSTGRES_SERVER}" \
+        --no-wait \
+        --output none \
+        --only-show-errors
+      ;;
+    Starting)
+      echo "PostgreSQL server is already starting."
+      ;;
+    *)
+      echo "Cannot start PostgreSQL server from state: ${state:-unknown}" >&2
+      return 1
+      ;;
+  esac
+  wait_for_state "PostgreSQL server" "Ready" get_postgres_state
+}
+
+start_aks() {
+  local state
+  state=$(get_aks_state)
+  case "${state}" in
+    Running)
+      echo "AKS cluster is already running."
+      ;;
+    Stopped)
+      echo "Starting AKS cluster ${AKS_CLUSTER}..."
+      az aks start \
+        --subscription "${SUBSCRIPTION_ID}" \
+        --resource-group "${RESOURCE_GROUP}" \
+        --name "${AKS_CLUSTER}" \
+        --no-wait \
+        --output none \
+        --only-show-errors
+      ;;
+    Starting)
+      echo "AKS cluster is already starting."
+      ;;
+    *)
+      echo "Cannot start AKS cluster from state: ${state:-unknown}" >&2
+      return 1
+      ;;
+  esac
+  wait_for_state "AKS cluster" "Running" get_aks_state
+}
+
+start_gateway() {
+  local state
+  state=$(get_gateway_state)
+  case "${state}" in
+    Running)
+      echo "Application Gateway is already running."
+      ;;
+    Stopped)
+      echo "Starting Application Gateway ${APPLICATION_GATEWAY}..."
+      az network application-gateway start \
+        --subscription "${SUBSCRIPTION_ID}" \
+        --resource-group "${RESOURCE_GROUP}" \
+        --name "${APPLICATION_GATEWAY}" \
+        --no-wait \
+        --output none \
+        --only-show-errors
+      ;;
+    Starting)
+      echo "Application Gateway is already starting."
+      ;;
+    *)
+      echo "Cannot start Application Gateway from state: ${state:-unknown}" >&2
+      return 1
+      ;;
+  esac
+  wait_for_state "Application Gateway" "Running" get_gateway_state
+}
+
+wait_for_http_200() {
+  local deadline=$((SECONDS + WAIT_TIMEOUT_SECONDS))
+  local status
+
+  echo "Waiting for ${CARGO_TRACKER_URL} to return HTTP 200..."
+  while (( SECONDS < deadline )); do
+    status=$(curl \
+      --silent \
+      --output /dev/null \
+      --write-out '%{http_code}' \
+      --max-time 30 \
+      "${CARGO_TRACKER_URL}" || true)
+    if [[ "${status}" == "200" ]]; then
+      echo "Cargo Tracker: HTTP ${status}"
+      return 0
+    fi
+    sleep "${POLL_INTERVAL_SECONDS}"
+  done
+
+  echo "Timed out after ${WAIT_TIMEOUT_SECONDS}s waiting for ${CARGO_TRACKER_URL}." >&2
+  return 1
+}
+
+require_command az
+require_command curl
+KUBECTL_COMMAND=$(find_kubectl)
+readonly KUBECTL_COMMAND
+
+az account show \
+  --subscription "${SUBSCRIPTION_ID}" \
+  --output none \
+  --only-show-errors
+
+echo "Resuming Cargo Tracker deployment in ${RESOURCE_GROUP}..."
+start_postgres
+start_aks
+
+az aks get-credentials \
+  --subscription "${SUBSCRIPTION_ID}" \
+  --resource-group "${RESOURCE_GROUP}" \
+  --name "${AKS_CLUSTER}" \
+  --admin \
+  --overwrite-existing \
+  --output none \
+  --only-show-errors
+
+"${KUBECTL_COMMAND}" \
+  --namespace "${KUBERNETES_NAMESPACE}" \
+  rollout status \
+  "deployment/${APPLICATION_NAME}" \
+  --timeout=15m
+
+"${KUBECTL_COMMAND}" \
+  --namespace "${KUBERNETES_NAMESPACE}" \
+  wait \
+  --for=condition=Ready \
+  "openlibertyapplication/${APPLICATION_NAME}" \
+  --timeout=15m
+
+start_gateway
+wait_for_http_200
+
+echo "Cargo Tracker is available at ${CARGO_TRACKER_URL}"
