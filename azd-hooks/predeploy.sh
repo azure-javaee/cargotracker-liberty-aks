@@ -1,28 +1,59 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-export ACR_NAME=$(az acr list  -g ${RESOURCE_GROUP_NAME} --query [0].name -o tsv)
-export ACR_SERVER=$(az acr show -n $ACR_NAME -g ${RESOURCE_GROUP_NAME} --query 'loginServer' -o tsv)
-export ACR_USER_NAME=$(az acr credential show -n $ACR_NAME -g ${RESOURCE_GROUP_NAME} --query 'username' -o tsv)
-export ACR_PASSWORD=$(az acr credential show -n $ACR_NAME -g ${RESOURCE_GROUP_NAME} --query 'passwords[0].value' -o tsv)
+set -euo pipefail
 
-# Build and push docker image to ACR
-echo "Get image name and version......"
+: "${RESOURCE_GROUP_NAME:?RESOURCE_GROUP_NAME is required}"
+: "${ACR_NAME:?ACR_NAME is required}"
+: "${DB_RESOURCE_NAME:?DB_RESOURCE_NAME is required}"
+: "${DB_NAME:?DB_NAME is required}"
+: "${DB_USER_NAME:?DB_USER_NAME is required}"
+: "${DB_ADMIN_PASSWORD:?DB_ADMIN_PASSWORD is required}"
+: "${APP_INSIGHTS_CONNECTION_STRING:?APP_INSIGHTS_CONNECTION_STRING is required}"
 
-run_maven_command() {
-    mvn -q -Dexec.executable=echo -Dexec.args="$1" --non-recursive exec:exec 2>/dev/null | sed -e 's/\x1b\[[0-9;]*m//g' | tr -d '\r\n'
-}
+export ACR_SERVER
+ACR_SERVER=$(az acr show \
+  --name "${ACR_NAME}" \
+  --resource-group "${RESOURCE_GROUP_NAME}" \
+  --query loginServer \
+  --output tsv | tr -d '\r')
 
-IMAGE_NAME=$(run_maven_command '${project.artifactId}')
-IMAGE_VERSION=$(run_maven_command '${project.version}')
+export LOGIN_SERVER="${ACR_SERVER}"
+export DB_SERVER_NAME="${DB_RESOURCE_NAME}.postgres.database.azure.com"
+export DB_PORT_NUMBER=5432
+export DB_USER="${DB_USER_NAME}"
+export DB_PASSWORD="${DB_ADMIN_PASSWORD}"
+export NAMESPACE="${AZURE_AKS_NAMESPACE:-default}"
+export APPLICATIONINSIGHTS_CONNECTION_STRING="${APP_INSIGHTS_CONNECTION_STRING}"
 
-echo "Docker build and push to ACR Server ${ACR_SERVER} with image name ${IMAGE_NAME} and version ${IMAGE_VERSION}"
+mvn clean package -PopenLibertyOnAks
 
-mvn clean package -DskipTests
-cd target
+IMAGE_NAME=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.artifactId)
+IMAGE_VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)
+GIT_COMMIT=$(git rev-parse HEAD)
+IMAGE_TAG="${IMAGE_VERSION}-$(git rev-parse --short=12 HEAD)-$(date -u +%Y%m%d%H%M%S)"
 
-docker login -u ${ACR_USER_NAME} -p ${ACR_PASSWORD} ${ACR_SERVER}
+az acr build \
+  --registry "${ACR_NAME}" \
+  --platform linux/amd64 \
+  --image "${IMAGE_NAME}:${IMAGE_TAG}" \
+  --build-arg "BUILD_COMMIT=${GIT_COMMIT}" \
+  target
 
-export DOCKER_BUILDKIT=1
-docker buildx create --use
-docker buildx build --platform linux/amd64 -t ${ACR_SERVER}/${IMAGE_NAME}:${IMAGE_VERSION} --pull --file=Dockerfile . --load
-docker push ${ACR_SERVER}/${IMAGE_NAME}:${IMAGE_VERSION}
+cat > custom-values.yaml <<EOF
+replicaCount: 2
+namespace: "${NAMESPACE}"
+appInsightConnectionString: "${APPLICATIONINSIGHTS_CONNECTION_STRING}"
+loginServer: "${ACR_SERVER}"
+imageName: "${IMAGE_NAME}"
+imageTag: "${IMAGE_TAG}"
+azureOpenAI:
+  enabled: false
+db:
+  ServerName: "${DB_SERVER_NAME}"
+  PortNumber: "${DB_PORT_NUMBER}"
+  Name: "${DB_NAME}"
+  User: "${DB_USER}"
+  Password: "${DB_PASSWORD}"
+EOF
+
+azd env set CARGO_TRACKER_IMAGE "${ACR_SERVER}/${IMAGE_NAME}:${IMAGE_TAG}"

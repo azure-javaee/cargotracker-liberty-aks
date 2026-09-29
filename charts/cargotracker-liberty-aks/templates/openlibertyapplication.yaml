@@ -11,6 +11,8 @@ spec:
     type: ClusterIP
     port: 9080
   env:
+    - name: JAVA_TOOL_OPTIONS
+      value: "-javaagent:/config/applicationinsights-agent.jar"
     - name: DB_SERVER_NAME
       valueFrom:
         secretKeyRef:
@@ -41,6 +43,7 @@ spec:
         secretKeyRef:
           name: app-insight-secret
           key: connection.string
+    {{- if .Values.azureOpenAI.enabled }}
     - name: AZURE_OPENAI_KEY
       valueFrom:
         secretKeyRef:
@@ -56,12 +59,13 @@ spec:
         secretKeyRef:
           name: openai-secret
           key: azureOpenAIDeploymentName
+    {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: cargo-tracker-ingress
-  namespace: default
+  namespace: "{{ .Values.namespace }}"
   annotations:
     appgw.ingress.kubernetes.io/cookie-based-affinity: "true"
     appgw.ingress.kubernetes.io/use-private-ip: "false"

@@ -55,6 +55,7 @@ import org.eclipse.cargotracker.infrastructure.persistence.jpa.JpaLocationReposi
 import org.eclipse.cargotracker.infrastructure.persistence.jpa.JpaVoyageRepository;
 import org.eclipse.cargotracker.infrastructure.routing.ExternalRoutingService;
 import org.eclipse.pathfinder.api.GraphTraversalService;
+import org.eclipse.pathfinder.api.ShortestPathService;
 import org.eclipse.pathfinder.api.TransitEdge;
 import org.eclipse.pathfinder.api.TransitPath;
 import org.eclipse.pathfinder.internal.GraphDao;
@@ -89,9 +90,18 @@ public class BookingServiceTest {
 
     String launch = System.getProperty("arquillian.launch", "payara");
     String webXml = launch.equals("openliberty") ? "test-liberty-web.xml" : "test-web.xml";
-    String[] dependencies = launch.equals("openliberty") ?
-               new String[] { "org.apache.commons:commons-lang3" } :
-               new String[] { "org.apache.commons:commons-lang3", "com.h2database:h2"};
+    String[] dependencies = launch.equals("openliberty")
+        ? new String[] {
+            "org.apache.commons:commons-lang3",
+            "dev.langchain4j:langchain4j",
+            "dev.langchain4j:langchain4j-azure-open-ai"
+        }
+        : new String[] {
+            "org.apache.commons:commons-lang3",
+            "com.h2database:h2",
+            "dev.langchain4j:langchain4j",
+            "dev.langchain4j:langchain4j-azure-open-ai"
+        };
     
     return ShrinkWrap.create(WebArchive.class, "cargo-tracker-test.war")
         // Application layer component directly under test.
@@ -145,7 +155,7 @@ public class BookingServiceTest {
         .addClass(TransitPath.class)
         .addClass(TransitEdge.class)
         // Third-party system simulator
-        .addClass(GraphTraversalService.class)
+        .addPackage(ShortestPathService.class.getPackage())
         .addClass(GraphDao.class)
         // Sample data.
         .addClass(BookingServiceTestDataGenerator.class)

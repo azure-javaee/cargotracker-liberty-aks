@@ -59,7 +59,13 @@ In this sample, you will:
    Client Version: version.Info{Major:"1", Minor:"26", GitVersion:"v1.26.3", GitCommit:"9e644106593f3f4aa98f8a84b23db5fa378900bd", GitTreeState:"clean", BuildDate:"2023-03-15T13:40:17Z", GoVersion:"go1.19.7", Compiler:"gc", Platform:"linux/amd64"}
    Kustomize Version: v4.5.7
    ```
-- Maven: Apache Maven `3.8.7` (NON_CANONICAL).
+- Maven 3.9.8 or later.
+- Azure CLI 2.71.0 or later.
+- Azure Developer CLI (`azd`) 1.34.2 or later for the automated path.
+- GitHub CLI (`gh`) authenticated for public repository access.
+- Helm 3.
+- Docker is optional. The automated path builds the Linux AMD64 image remotely
+  with Azure Container Registry.
 - Azure Subscription, on which you are able to create resources and assign permissions
   - View your subscription using ```az account show``` 
   - If you don't have an account, you can [create one for free](https://azure.microsoft.com/free). 
@@ -756,71 +762,70 @@ This job is to build app, push it to ACR and apply it to Open Liberty server run
 * Print app URL. Print the cargo tracker URL to pipeline summary page. Now you'are able to access cargo tracker with the URL from your browser.
 
 ## Unit-3 - Automate deployments using AZD
-Use following steps to automate deployments using the Azure Developer CLI (azd).
 
-### Prerequisites
-1. [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) (azd) installed. 
-2. Docker installed. You can install Docker by following the instructions [here](https://docs.docker.com/get-docker/).
-3. Azure CLI installed. You can install the Azure CLI by following the instructions [here](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli).
-4. Helm installed. For instructions to install Helm see [Installing Helm](https://helm.sh/docs/intro/install/).
+The `azd` path is the reproducible deployment path. It provisions Open Liberty
+Operator 1.6.2 from the pinned `WASdev/azure.liberty.aks` source, AKS, ACR,
+Application Gateway ingress, PostgreSQL Flexible Server, Log Analytics, and
+Application Insights. Azure OpenAI is not provisioned by default. The
+application uses its deterministic shortest-path implementation when Azure
+OpenAI is not configured.
 
-### How to Run
+### How to run
 
-1. Clone the Cargo Tracker repository to your development environment.
+From a fresh shell with JDK 17, Maven 3.9.8+, Azure CLI, `azd`, Helm 3, and
+`kubectl` on `PATH`:
 
-   ```bash
-   git clone https://github.com/Azure-Samples/cargotracker-liberty-aks.git
-   cd cargotracker-liberty-aks
-   ```
+```bash
+export JAVA_HOME=/path/to/jdk-17
+export PATH="${JAVA_HOME}/bin:${PATH}"
 
-1. Run the following command to authenticate with Azure using the Azure CLI.
-    ```bash
-    az login
-    ```
+az login
+azd config set auth.useAzCliAuth true
+azd auth status --no-prompt
 
-1. Run the following command to authenticate with Azure using the Azure Developer CLI (azd). 
-    ```bash
-    azd auth login
-    ```
+azd env new <unique-environment-name> \
+  --location <azure-region> \
+  --subscription <subscription-id> \
+  --no-prompt
 
-1. Run the following command to create a new environment using the Azure Developer CLI (azd). It's a good idea to use a disambiguation prefix for your environment name, such as your initials and todays date.
+azd env set DB_ADMIN_PASSWORD \
+  "$(openssl rand -base64 36 | tr -d '/+=' | cut -c1-32)"
+azd env set LIBERTY_AKS_REPO_REF \
+  1bfcc50b1bfdb4165d4ce5a5deb62b5b5346a3cc
 
-    ```bash
-    azd env new gzh0919-cargotracker-liberty-aks
-    ```
+azd provision --no-prompt
+azd deploy demo --no-prompt
+```
 
-1. Run the following command to provision the required Azure resources. Input the required parameters when prompted.
+The predeploy hook builds the Java 17/Open Liberty packaging and submits the
+Linux AMD64 container build to ACR with `az acr build`. It uses a unique tag
+containing the Git commit and UTC build timestamp, then passes that existing
+image through azd to the local Helm chart. It does not use ACR admin
+credentials or require a local Docker daemon. The deployment waits for the
+Open Liberty Operator, the generated Kubernetes Deployment, and an HTTP 200
+response from Application Gateway. `azd deploy` then prints and stores the
+Cargo Tracker URL in the selected environment as `CARGO_TRACKER_URL`.
 
-   * Be sure to select the correct Azure subscription when prompted.
-   * We observe that `westus` region has a higher likelihood of success than `eastus`.
+Verify the deployment:
 
-    ```bash
-    azd provision
-    ```
-    
-    For `administratorLoginPassword` enter  `Secret123456`.
-    
-    When the provisioning completes, you'll see a message similar to the following:
-    
-    ```bash
-    SUCCESS: Your application was provisioned in Azure in 27 minutes 59 seconds.
-    ```
+```bash
+export CARGO_TRACKER_URL="$(azd env get-value CARGO_TRACKER_URL)"
+curl --fail --show-error --location "${CARGO_TRACKER_URL}"
+curl --fail --show-error \
+  -H "Accept: application/json" \
+  "${CARGO_TRACKER_URL}rest/graph-traversal/shortest-path?origin=CNHKG&destination=SESTO&deadline=20261030"
+```
 
-2. Ensure Docker is running locally. Run the following command to deploy the Cargo Tracker application to Azure Kubernetes Service (AKS) using the Azure Developer CLI (azd).
-
-    ```bash
-    azd deploy
-    ```
-
-3. Wait for the deployment to complete. Once the deployment is complete, you can access the Cargo Tracker application using the URL provided in the output.
-
-You can now exercise the Cargo Tracker functionality as shown in Appendix 1.
+You can then exercise the remaining Cargo Tracker functionality in Appendix 1.
 
 ### Clean up
 
-The steps in this section show you how to clean up and deallocte the resources deployed in the previous section.
+The deployment is intentionally retained until it has been inspected. To
+delete the selected environment's Azure resources:
 
-1. `azd down` 
+```bash
+azd down --purge --force --no-prompt
+```
 
 
 ## Appendix 1 - Exercise Cargo Tracker Functionality

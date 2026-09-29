@@ -6,29 +6,50 @@ import jakarta.enterprise.context.ApplicationScoped;
 
 @ApplicationScoped
 public class ShortestPathAiImpl implements ShortestPathAi {
-    private static final AzureOpenAiChatModel MODEL;
-    private static final ShortestPathAi SHORTEST_PATH_AI;
+    private volatile ShortestPathAi delegate;
 
-    static {
-        MODEL = AzureOpenAiChatModel.builder()
-                .apiKey(System.getenv("AZURE_OPENAI_KEY"))
-                .endpoint(System.getenv("AZURE_OPENAI_ENDPOINT"))
-                .deploymentName(System.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"))
-                .temperature(0.2)
-                .logRequestsAndResponses(true)
-                .build();
-
-        SHORTEST_PATH_AI = AiServices.builder(ShortestPathAi.class)
-                .chatLanguageModel(MODEL)
-                .build();
+    static boolean isConfigured() {
+        return isSet("AZURE_OPENAI_KEY")
+                && isSet("AZURE_OPENAI_ENDPOINT")
+                && isSet("AZURE_OPENAI_DEPLOYMENT_NAME");
     }
 
-    public ShortestPathAiImpl() {
-        // Empty constructor
+    private static boolean isSet(String name) {
+        String value = System.getenv(name);
+        return value != null && !value.isBlank();
     }
 
     @Override
     public String chat(String location, String voyage, String carrier_movement, String from, String to) {
-        return SHORTEST_PATH_AI.chat(location, voyage, carrier_movement, from, to);
+        return getDelegate().chat(location, voyage, carrier_movement, from, to);
+    }
+
+    private ShortestPathAi getDelegate() {
+        if (!isConfigured()) {
+            throw new IllegalStateException(
+                    "Azure OpenAI is disabled. Set AZURE_OPENAI_KEY, "
+                    + "AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_DEPLOYMENT_NAME to enable it.");
+        }
+
+        ShortestPathAi current = delegate;
+        if (current == null) {
+            synchronized (this) {
+                current = delegate;
+                if (current == null) {
+                    AzureOpenAiChatModel model = AzureOpenAiChatModel.builder()
+                            .apiKey(System.getenv("AZURE_OPENAI_KEY"))
+                            .endpoint(System.getenv("AZURE_OPENAI_ENDPOINT"))
+                            .deploymentName(System.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"))
+                            .temperature(0.2)
+                            .logRequestsAndResponses(true)
+                            .build();
+                    current = AiServices.builder(ShortestPathAi.class)
+                            .chatLanguageModel(model)
+                            .build();
+                    delegate = current;
+                }
+            }
+        }
+        return current;
     }
 }

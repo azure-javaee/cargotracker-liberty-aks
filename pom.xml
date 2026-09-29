@@ -26,6 +26,9 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.report.sourceEncoding>UTF-8</project.report.sourceEncoding>
         <langchain4j.version>0.34.0</langchain4j.version>
+        <openliberty.runtime.version>26.0.0.9</openliberty.runtime.version>
+        <applicationinsights-agent.version>3.7.10</applicationinsights-agent.version>
+        <postgresql.version>42.7.13</postgresql.version>
 
         <!-- Test Utilities -->
         <arquilian.version>1.8.0.Final</arquilian.version>
@@ -522,6 +525,7 @@
                         <artifactId>liberty-maven-plugin</artifactId>
                         <version>3.8.2</version>
                         <configuration>
+                            <libertyRuntimeVersion>${openliberty.runtime.version}</libertyRuntimeVersion>
                             <copyDependencies>
                                 <dependencyGroup>
                                     <location>${project.build.directory}/liberty/wlp/usr/shared/resources</location>
@@ -652,7 +656,7 @@
                                 <artifactItem>
                                     <groupId>org.postgresql</groupId>
                                     <artifactId>postgresql</artifactId>
-                                    <version>42.7.3</version>
+                                    <version>${postgresql.version}</version>
                                     <type>jar</type>
                                     <outputDirectory>${project.build.directory}/liberty/wlp/usr/shared/resources</outputDirectory>
                                     <destFileName>postgresql.jar</destFileName>
@@ -660,7 +664,7 @@
                                 <artifactItem>
                                     <groupId>com.microsoft.azure</groupId>
                                     <artifactId>applicationinsights-agent</artifactId>
-                                    <version>3.4.11</version>
+                                    <version>${applicationinsights-agent.version}</version>
                                     <type>jar</type>
                                     <outputDirectory>src/main/liberty/config</outputDirectory>
                                     <destFileName>applicationinsights-agent.jar</destFileName>
@@ -682,7 +686,7 @@
                                     <goal>deploy</goal>
                                 </goals>
                                 <configuration>
-                                    <libertyRuntimeVersion>23.0.0.9</libertyRuntimeVersion>
+                                    <libertyRuntimeVersion>${openliberty.runtime.version}</libertyRuntimeVersion>
                                     <outputDirectory>${project.build.directory}/wlp-package</outputDirectory>
                                 </configuration>
                             </execution>

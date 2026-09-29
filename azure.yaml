@@ -32,11 +32,15 @@ hooks:
 services:
     demo:
         host: aks
+        resourceGroup: ${RESOURCE_GROUP_NAME}
+        resourceName: ${AZURE_AKS_CLUSTER_NAME}
+        image: ${CARGO_TRACKER_IMAGE}
+        docker:
+            imagePassthrough: true
         k8s:
             namespace: default
             helm:
                 releases:
                     - name: demo
-                      chart: cargotracker-liberty-aks/cargotracker-liberty-aks-chart
-                      version: 1.0.8
+                      chart: ./charts/cargotracker-liberty-aks
                       values: custom-values.yaml # This file is created by the predeploy hook

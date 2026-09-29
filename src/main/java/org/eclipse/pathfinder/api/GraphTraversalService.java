@@ -61,9 +61,7 @@ public class GraphTraversalService {
                                               @Size(min = 8, max = 8, message = "Deadline value must be eight characters long.")
                                               @QueryParam("deadline")
                                               String deadline) {
-        String endpoint = System.getenv("AZURE_OPENAI_ENDPOINT");
-        String key = System.getenv("AZURE_OPENAI_KEY");
-        if ((null != endpoint && !endpoint.isEmpty()) && (null != key && !key.isEmpty())) {
+        if (ShortestPathAiImpl.isConfigured()) {
             String shortestPath = getShortestPathWithTimeout(originUnLocode, destinationUnLocode);
             if (isValidJsonUsingJsonP(shortestPath) && !shortestPath.equals("[]")) {
                 Jsonb jsonb = JsonbBuilder.create();

@@ -1,37 +1,46 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-az extension add --upgrade -n application-insights
-source .scripts/setup-env-variables-template.sh
+set -euo pipefail
 
-mkdir tmp-build
-DIR=$(pwd)/tmp-build
-echo "Current directory: $DIR"
+repo_root=$(pwd)
+template_ref=${LIBERTY_AKS_REPO_REF:-1bfcc50b1bfdb4165d4ce5a5deb62b5b5346a3cc}
+output_dir="${repo_root}/infra/azure.liberty.aks"
+tmp_dir=$(mktemp -d "${repo_root}/tmp-build.XXXXXX")
 
-cd ${DIR}
-git clone https://github.com/WASdev/azure.liberty.aks ${DIR}/azure.liberty.aks
+cleanup() {
+  rm -rf "${tmp_dir}"
+}
+trap cleanup EXIT
 
-cd ${DIR}/azure.liberty.aks
-git checkout ${LIBERTY_AKS_REPO_REF}
-export VERSION=$(grep -A4 "<parent>" pom.xml | grep "<version>" | awk -F'[<>]' '{print $3}')
+for command in gh mvn; do
+  command -v "${command}" >/dev/null 2>&1 || {
+    echo "Required command not found: ${command}" >&2
+    exit 1
+  }
+done
 
-cd ${DIR}
-curl -L -o ${DIR}/azure-javaee-iaas-parent-${VERSION}.pom  \
-     https://github.com/azure-javaee/azure-javaee-iaas/releases/download/azure-javaee-iaas-parent-${VERSION}/azure-javaee-iaas-parent-${VERSION}.pom
+echo "Building WASdev/azure.liberty.aks at ${template_ref}"
+gh repo clone WASdev/azure.liberty.aks "${tmp_dir}/azure.liberty.aks" -- --no-checkout
+git -C "${tmp_dir}/azure.liberty.aks" checkout --detach "${template_ref}"
 
+parent_version=$(sed -n '/<parent>/,/<\/parent>/s:.*<version>\(.*\)</version>.*:\1:p' \
+  "${tmp_dir}/azure.liberty.aks/pom.xml" | head -n 1)
+parent_asset="azure-javaee-iaas-parent-${parent_version}.pom"
 
-mvn install:install-file -Dfile=${DIR}/azure-javaee-iaas-parent-${VERSION}.pom \
-                         -DgroupId=com.microsoft.azure.iaas \
-                         -DartifactId=azure-javaee-iaas-parent \
-                         -Dversion=${VERSION} \
-                         -Dpackaging=pom
+gh release download "azure-javaee-iaas-parent-${parent_version}" \
+  --repo azure-javaee/azure-javaee-iaas \
+  --pattern "${parent_asset}" \
+  --dir "${tmp_dir}"
 
-cd ${DIR}/azure.liberty.aks
-mvn clean package -DskipTests
+mvn install:install-file \
+  -Dfile="${tmp_dir}/${parent_asset}" \
+  -DgroupId=com.microsoft.azure.iaas \
+  -DartifactId=azure-javaee-iaas-parent \
+  -Dversion="${parent_version}" \
+  -Dpackaging=pom
 
-mkdir -p ${DIR}/../infra/azure.liberty.aks
-cp -r ${DIR}/azure.liberty.aks/target/bicep/* ${DIR}/../infra/azure.liberty.aks
+mvn --file "${tmp_dir}/azure.liberty.aks/pom.xml" clean package -DskipTests
 
-# shell sleep 5 seconds
-sleep 5
-
-rm -rf ${DIR}
+rm -rf "${output_dir}"
+mkdir -p "${output_dir}"
+cp -R "${tmp_dir}/azure.liberty.aks/target/bicep/." "${output_dir}/"

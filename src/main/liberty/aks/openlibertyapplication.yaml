@@ -11,6 +11,8 @@ spec:
     type: ClusterIP
     port: 9080
   env:
+    - name: JAVA_TOOL_OPTIONS
+      value: "-javaagent:/config/applicationinsights-agent.jar"
     - name: DB_SERVER_NAME
       valueFrom:
         secretKeyRef:

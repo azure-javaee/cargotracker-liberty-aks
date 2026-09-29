@@ -9,20 +9,27 @@ param environmentName string
 @description('Primary location for all resources')
 param location string
 
+@description('Location for PostgreSQL Flexible Server. Some subscriptions restrict regional availability.')
+param databaseLocation string = 'westus2'
+
 @description('The base URL for artifacts')
-param _artifactsLocation string = 'https://raw.githubusercontent.com/WASdev/azure.liberty.aks/048e776e9efe2ffed8368812e198c1007ba94b2c/src/main/'
+param _artifactsLocation string = 'https://raw.githubusercontent.com/WASdev/azure.liberty.aks/1bfcc50b1bfdb4165d4ce5a5deb62b5b5346a3cc/src/main/'
+
+@description('Optional SAS token for the artifact location')
+@secure()
+param _artifactsLocationSasToken string = ''
 
 @description('Whether to create a new AKS cluster')
 param createCluster bool = true
 
 @description('The VM size for AKS nodes')
-param vmSize string = 'Standard_DS2_v2'
+param vmSize string = 'Standard_D2s_v5'
 
 @description('The minimum node count for AKS cluster')
 param minCount int = 1
 
 @description('The maximum node count for AKS cluster')
-param maxCount int = 5
+param maxCount int = 3
 
 @description('Whether to create Azure Container Registry')
 param createACR bool = true
@@ -40,15 +47,11 @@ param appGatewayCertificateOption string = 'generateCert'
 param enableCookieBasedAffinity bool = true
 
 @description('Server administrator login name')
-@secure()
 param administratorLogin string = 'azureroot'
 
 @description('Server administrator password')
 @secure()
 param administratorLoginPassword string
-
-@description('The Model name for OpenAI')
-param openAIModelName string = 'gpt-4o'
 
 // Tags that should be applied to all resources.
 //
@@ -73,6 +76,7 @@ module openLibertyOnAks './azure.liberty.aks/mainTemplate.bicep' = {
   name: 'openliberty-on-aks'
   params: {
         _artifactsLocation: _artifactsLocation
+        _artifactsLocationSasToken: _artifactsLocationSasToken
         location: location
         createCluster: createCluster
         vmSize: vmSize
@@ -98,57 +102,36 @@ module monitoring './shared/monitoring.bicep' = {
  scope: rg
 }
 
-module cognitiveservices './shared/cognitiveservices.bicep' = {
-  name: 'openai'
-  scope: rg
-  params: {
-    location: location
-    name: 'openai-${suffix}'
-    customSubDomainName: 'openai-${suffix}'
-    deployments: [
-      {
-        name: 'openai-deployment-${suffix}'
-        model: {
-          name: openAIModelName
-          version: '2024-08-06'
-        }
-      }
-    ]
-  }
-}
-
 module flexibleserver './shared/flexibleserver.bicep' = {
   name: 'flexibleserver'
   scope: rg
   params: {
-      location: location
+      location: databaseLocation
       databaseNames: [
         'liberty-db-${suffix}'
       ]
       name: 'liberty-server-${suffix}'
       sku: {
-        name: 'Standard_D4ds_v4'
-        tier: 'GeneralPurpose'
+        name: 'Standard_B1ms'
+        tier: 'Burstable'
       }
       storage: {
         storageSizeGB: 64
       }
-      version: '15'
+      version: '16'
       administratorLogin: administratorLogin
       administratorLoginPassword: administratorLoginPassword
       allowAzureIPsFirewall: true
     }
 }
 
-output AZURE_OPENAI_KEY string =cognitiveservices.outputs.key
-output AZURE_OPENAI_ENDPOINT string =cognitiveservices.outputs.endpoint
-output AZURE_OPENAI_MODEL_NAME string = openAIModelName
 output AZURE_AKS_CLUSTER_NAME string = openLibertyOnAks.outputs.clusterName
+output AZURE_AKS_NAMESPACE string = openLibertyOnAks.outputs.appNamespaceName
+output ACR_NAME string = openLibertyOnAks.outputs.acrName
 output AZURE_RESOURCE_GROUP string = rg.name
 output DB_NAME string = 'liberty-db-${suffix}'
 output DB_RESOURCE_NAME string = 'liberty-server-${suffix}'
 output DB_USER_NAME string = administratorLogin
-output DB_USER_PASSWORD string = administratorLoginPassword
 output LOCATION string = location
 output RESOURCE_GROUP_NAME string = rg.name
 output WORKSPACE_ID string = monitoring.outputs.logAnalyticsWorkspaceId

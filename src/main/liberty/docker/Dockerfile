@@ -1,5 +1,8 @@
 # open liberty base image
-FROM openliberty/open-liberty:full-java17-openj9-ubi
+FROM icr.io/appcafe/open-liberty:26.0.0.9-full-java17-openj9-ubi-minimal
+
+ARG BUILD_COMMIT=unknown
+LABEL org.opencontainers.image.revision="${BUILD_COMMIT}"
 
 # Add config, app and jdbc driver
 COPY --chown=1001:0 liberty/wlp/usr/servers/defaultServer/server.xml /config/server.xml

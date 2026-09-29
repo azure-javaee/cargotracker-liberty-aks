@@ -62,6 +62,9 @@
     <library id="driver-library">
         <fileset dir="${shared.resource.dir}" includes="postgresql.jar" />
     </library>
+    <library id="dbLib">
+        <fileset dir="${shared.resource.dir}" includes="hsqldb-*.jar" />
+    </library>
 
     <databaseStore id="EJBPersistentTimerStore" keyGenerationStrategy="SEQUENCE" tablePrefix="WLP2_" />
     <persistentExecutor enableTaskExecution="true" id="EJBPersistentTimerExecutor"

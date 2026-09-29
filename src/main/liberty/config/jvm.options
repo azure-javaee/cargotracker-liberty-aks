@@ -1,3 +1,2 @@
-# https://www.ibm.com/docs/en/was-liberty/core?topic=manually-customizing-liberty-environment
-
--javaagent:/config/applicationinsights-agent.jar
+# Runtime-specific JVM options belong in the deployment manifest so local
+# Open Liberty runs do not require the Application Insights agent.
